@@ -159,9 +159,9 @@ async def add_bot(owner_id: int, token: str, username: str):
         default_cbtn = "✅ Men robot emasman"
 
         await db.execute('''
-            INSERT INTO bots (owner_id, token, welcome_message, welcome_btn_text, welcome_btn_url, captcha_text, captcha_btn_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (owner_id, token, default_welcome, default_btn, default_url, default_captcha, default_cbtn))
+            INSERT INTO bots (owner_id, token, username, welcome_message, welcome_btn_text, welcome_btn_url, captcha_text, captcha_btn_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (owner_id, token, username, default_welcome, default_btn, default_url, default_captcha, default_cbtn))
         await db.execute('INSERT OR IGNORE INTO bot_stats (bot_token) VALUES (?)', (token,))
         await db.commit()
 

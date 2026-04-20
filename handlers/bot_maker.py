@@ -85,6 +85,23 @@ async def go_main_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "bot_list")
 async def show_my_bots(callback: CallbackQuery):
     bots = await get_bots_by_owner(callback.from_user.id)
+    
+    # Simple fix for missing usernames (self-healing)
+    updated = False
+    for i, bot_record in enumerate(bots):
+        if not bot_record.get('username'):
+            try:
+                temp_bot = Bot(token=bot_record['token'])
+                me = await temp_bot.get_me()
+                from database.db import update_bot_field
+                await update_bot_field(bot_record['id'], 'username', me.username)
+                bots[i] = dict(bot_record)
+                bots[i]['username'] = me.username
+                updated = True
+                await temp_bot.session.close()
+            except:
+                pass
+    
     await callback.message.edit_text(
         "<b>🤖 Botingizni tanlang yoko yangisini yarating:</b>", 
         parse_mode="HTML", 
