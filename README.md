@@ -46,7 +46,7 @@ Ushbu bot Telegram kanallari va guruhlarini boshqarish, obunachilar bazasini yig
 
 Botni ishga tushirish uchun quyidagi buyruqni bering:
 ```bash
-python3 main.py
+python3 run.py
 ```
 
 ## 📂 Loyiha Strukturasi
