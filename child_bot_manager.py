@@ -110,8 +110,39 @@ class ChildBotManager:
     async def start_manager(self):
         self.background_task = asyncio.create_task(self.pending_worker())
         self.mailing_task = asyncio.create_task(self.mailing_worker())
+        self.scanner_task = asyncio.create_task(self.activity_scanner())
+
+    async def activity_scanner(self):
+        """Silently pings users to check if they've blocked the bot"""
+        from database.db import get_unverified_users, update_user_activity
+        import aiogram.exceptions
+        while True:
+            try:
+                users = await get_unverified_users(limit=20)
+                if not users:
+                    await asyncio.sleep(60) # All caught up
+                    continue
+                
+                for u in users:
+                    bot = self.get_bot(u['bot_token'])
+                    if bot:
+                        try:
+                            # typing action is invisible and low impact
+                            await bot.send_chat_action(u['user_id'], action="typing")
+                            await update_user_activity(u['bot_token'], u['user_id'], 1)
+                        except aiogram.exceptions.TelegramForbiddenError:
+                            await update_user_activity(u['bot_token'], u['user_id'], 0)
+                        except aiogram.exceptions.TelegramRetryAfter as e:
+                            await asyncio.sleep(e.retry_after)
+                        except Exception:
+                            pass
+                    await asyncio.sleep(0.05) # Sleep 50ms (20 users/sec)
+            except Exception as e:
+                print("Scanner error", e)
+                await asyncio.sleep(10)
 
     async def pending_worker(self):
+        from database.db import pop_due_requests, get_bot_by_token, increment_stat, add_bot_user
         while True:
             try:
                 due_requests = await pop_due_requests()
@@ -213,45 +244,58 @@ class ChildBotManager:
                     pin_msg = bool(m.get('pin_message'))
                     del_hours = m.get('auto_delete_hours', 0)
 
-                    # Send to batch
-                    for q in queue:
+                    # Send to batch in parallel
+                    import aiogram.exceptions
+                    async def send_one(q_item):
                         try:
-                            msg_obj = None
+                            m_obj = None
                             if m.get('file_type') == 'photo' and final_file:
-                                msg_obj = await bot.send_photo(
-                                    q['user_id'], photo=final_file, caption=text, reply_markup=kb, 
+                                m_obj = await bot.send_photo(
+                                    q_item['user_id'], photo=final_file, caption=text, reply_markup=kb, 
                                     parse_mode="HTML", disable_notification=notify_opt, protect_content=protect_opt
                                 )
                             elif m.get('file_type') == 'video' and final_file:
-                                msg_obj = await bot.send_video(
-                                    q['user_id'], video=final_file, caption=text, reply_markup=kb, 
+                                m_obj = await bot.send_video(
+                                    q_item['user_id'], video=final_file, caption=text, reply_markup=kb, 
                                     parse_mode="HTML", disable_notification=notify_opt, protect_content=protect_opt
                                 )
                             else:
-                                msg_obj = await bot.send_message(
-                                    q['user_id'], text=text, reply_markup=kb, 
+                                m_obj = await bot.send_message(
+                                    q_item['user_id'], text=text, reply_markup=kb, 
                                     parse_mode="HTML", link_preview_options=preview_opt, 
                                     disable_notification=notify_opt, protect_content=protect_opt
                                 )
                                 
-                            # Post-send actions
-                            if msg_obj:
-                                if pin_msg:
-                                    try:
-                                        await bot.pin_chat_message(q['user_id'], msg_obj.message_id)
-                                    except Exception:
-                                        pass
+                            if m_obj and pin_msg:
+                                try: await bot.pin_chat_message(q_item['user_id'], m_obj.message_id)
+                                except: pass
 
-                            # Mark sent
-                            await mark_queue_sent(q['id'])
+                            await mark_queue_sent(q_item['id'])
                             await increment_mailing_sent(m['id'])
-
+                        except aiogram.exceptions.TelegramForbiddenError:
+                            # User blocked the bot
+                            from database.db import deactivate_user, mark_queue_failed, increment_mailing_blocked
+                            await deactivate_user(bot.token, q_item['user_id'])
+                            await mark_queue_failed(q_item['id'])
+                            await increment_mailing_blocked(m['id'])
+                        except aiogram.exceptions.TelegramRetryAfter as e:
+                            # Hit rate limit, return wait time
+                            return e.retry_after
                         except Exception as e:
                             from database.db import mark_queue_failed, increment_mailing_blocked
-                            await mark_queue_failed(q['id'])
+                            await mark_queue_failed(q_item['id'])
                             await increment_mailing_blocked(m['id'])
-                    # Sleep slightly per batch to spread load
-                    await asyncio.sleep(slp)
+                        return 0
+
+                    tasks = [send_one(qi) for qi in queue]
+                    results = await asyncio.gather(*tasks)
+                    
+                    # If any task hit FloodWait, sleep for the max duration returned
+                    max_sleep = max(results) if results else 0
+                    if max_sleep > 0:
+                        await asyncio.sleep(max_sleep)
+                    else:
+                        await asyncio.sleep(slp)
 
             except Exception as e:
                 print("Mailing worker error", e)

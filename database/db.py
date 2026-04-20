@@ -75,9 +75,16 @@ async def init_db():
             bot_token TEXT,
             user_id INTEGER,
             joined_at INTEGER,
+            is_active BOOLEAN DEFAULT 1,
+            last_checked INTEGER DEFAULT 0,
             PRIMARY KEY (bot_token, user_id)
         )
         ''')
+        # Ensure column exists for already created DBs
+        try:
+            await db.execute("ALTER TABLE bot_users ADD COLUMN is_active BOOLEAN DEFAULT 1")
+            await db.execute("ALTER TABLE bot_users ADD COLUMN last_checked INTEGER DEFAULT 0")
+        except: pass
         await db.execute('''
         CREATE TABLE IF NOT EXISTS bot_stats (
             bot_token TEXT PRIMARY KEY,
@@ -441,7 +448,7 @@ async def populate_mailing_queue(mailing_id: int, bot_token: str) -> int:
         # Populate
         await db.execute("""
             INSERT INTO mailing_queue (mailing_id, bot_token, user_id)
-            SELECT ?, ?, user_id FROM bot_users WHERE bot_token = ?
+            SELECT ?, ?, user_id FROM bot_users WHERE bot_token = ? AND is_active = 1
         """, (mailing_id, bot_token, bot_token))
         await db.commit()
         
@@ -519,3 +526,24 @@ async def update_mass_settings(bot_token: str, fields: dict):
         query = f"UPDATE mass_mailing_settings SET {', '.join(sets)} WHERE bot_token = ?"
         await db.execute(query, tuple(vals))
         await db.commit()
+
+async def deactivate_user(bot_token: str, user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE bot_users SET is_active = 0 WHERE bot_token = ? AND user_id = ?", (bot_token, user_id))
+        await db.commit()
+
+async def update_user_activity(bot_token: str, user_id: int, is_active: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        now = int(time.time())
+        await db.execute("UPDATE bot_users SET is_active = ?, last_checked = ? WHERE bot_token = ? AND user_id = ?", 
+                         (is_active, now, bot_token, user_id))
+        await db.commit()
+
+async def get_unverified_users(limit: int = 50):
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        # Check users who were checked more than 7 days ago or never
+        one_week_ago = int(time.time()) - (7 * 24 * 3600)
+        async with db.execute("SELECT * FROM bot_users WHERE last_checked <= ? AND is_active = 1 LIMIT ?", (one_week_ago, limit)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]

@@ -61,6 +61,3 @@ python3 run.py
 ## 📄 Litsenziya
 
 Ushbu loyiha ochiq kodli bo'lib, o'rnatish va foydalanish mutlaqo bepul.
-
----
-*Created with ❤️ by Antigravity*
