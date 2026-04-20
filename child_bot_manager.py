@@ -443,4 +443,26 @@ class ChildBotManager:
             if bot:
                 await bot.session.close()
 
+    async def stop_all(self):
+        """Cleanly shuts down everything managed by the bot manager"""
+        # 1. Stop background workers
+        if hasattr(self, 'background_task') and self.background_task:
+            self.background_task.cancel()
+        if hasattr(self, 'mailing_task') and self.mailing_task:
+            self.mailing_task.cancel()
+            
+        # 2. Stop all child bots
+        tokens = list(self.polling_tasks.keys())
+        for token in tokens:
+            await self.stop_bot(token)
+            
+        # 3. Final wait for cancellations
+        tasks = []
+        if hasattr(self, 'background_task') and self.background_task: tasks.append(self.background_task)
+        if hasattr(self, 'mailing_task') and self.mailing_task: tasks.append(self.mailing_task)
+        
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        print("Bot Manager: All background tasks and child bots stopped.")
+
 bot_manager = ChildBotManager()

@@ -27,8 +27,13 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(bot_maker.router)
 
-    print("Asosiy bot ishga tushdi!")
-    await dp.start_polling(bot)
+    try:
+        print("Asosiy bot ishga tushdi!")
+        await dp.start_polling(bot)
+    finally:
+        print("Bot to'xtatilmoqda, resurslar tozalanmoqda...")
+        await bot_manager.stop_all()
+        await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
